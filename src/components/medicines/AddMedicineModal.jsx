@@ -15,6 +15,18 @@ export default function AddMedicineModal({ open, onClose, onSubmit, medicine }) 
   const m = medicine;
   const [priority, setPriority] = useState(m?.priority || 'important');
   const [strengthValue, strengthUnit] = m ? m.strength.split(' ') : ['', 'mg'];
+  const [form, setForm] = useState({
+    name: "",
+    strength: "",
+    unit: "",
+    form: "",
+    stock: "",
+    priority: "",
+    frequency: "",
+    quantityPerAdministration: "",
+    scheduledTimes: []
+  });
+
 
   return (
     <Modal open={open} onClose={onClose} size="md"
