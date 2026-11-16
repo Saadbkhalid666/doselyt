@@ -40,32 +40,28 @@ export default function Medicines() {
   });
 
   const list = medicines.filter((medicine) => {
-  const matchesSearch =
-    medicine.name.toLowerCase().includes(search.trim().toLowerCase()) ||
-    medicine.strength?.toLowerCase().includes(search.trim().toLowerCase()) ||
-    medicine.form?.toLowerCase().includes(search.trim().toLowerCase());
+    const matchesSearch =
+      medicine.name.toLowerCase().includes(search.trim().toLowerCase()) ||
+      medicine.strength?.toLowerCase().includes(search.trim().toLowerCase()) ||
+      medicine.form?.toLowerCase().includes(search.trim().toLowerCase());
 
-  const matchesPriority =
-    priority === "all" || medicine.priority === priority;
+    const matchesPriority =
+      priority === "all" || medicine.priority === priority;
 
-  return matchesSearch && matchesPriority;
-});
- 
-
-const handleDeleteMedicine = (id) => {
-  setMedicines((prev) => {
-    const updated = prev.filter((medicine) => medicine.id !== id);
-
-    localStorage.setItem(
-      "doselyt_medicines",
-      JSON.stringify(updated)
-    );
-
-    return updated;
+    return matchesSearch && matchesPriority;
   });
 
-  setToDelete(null);
-};
+  const handleDeleteMedicine = (id) => {
+    setMedicines((prev) => {
+      const updated = prev.filter((medicine) => medicine.id !== id);
+
+      localStorage.setItem("doselyt_medicines", JSON.stringify(updated));
+
+      return updated;
+    });
+
+    setToDelete(null);
+  };
 
   const handleMedicineSubmit = (savedMedicine) => {
     setMedicines((prev) => {
@@ -82,6 +78,34 @@ const handleDeleteMedicine = (id) => {
 
     setForm({ open: false, medicine: null });
   };
+
+ const handleTakenMedicine = (id) => {
+  setMedicines((prev) => {
+    const updated = prev.map((medicine) => {
+      if (medicine.id !== id) return medicine;
+
+      const currentStock = medicine.stock || 0;
+      const quantity = medicine.quantityPerAdministration || 0;
+
+      if (quantity <= 0 || currentStock < quantity) {
+        return medicine;
+      }
+
+      return {
+        ...medicine,
+        stock: currentStock - quantity,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    localStorage.setItem(
+      "doselyt_medicines",
+      JSON.stringify(updated)
+    );
+
+    return updated;
+  });
+};
 
   // The search + priority controls are UI only: filter `medicines` yourself using `search` and `priority`.
   // const list = Array.isArray(medicines) ? medicines : [];
@@ -167,11 +191,11 @@ const handleDeleteMedicine = (id) => {
                 key={m.id}
                 medicine={m}
                 onEdit={(med) => setForm({ open: true, medicine: med })}
-               onDelete={(id) => {
-  const medicine = medicines.find((item) => item.id === id);
-  setToDelete(medicine || null);
-}}
-                onTaken={(med) => console.log("Taken", med)}
+                onDelete={(id) => {
+                  const medicine = medicines.find((item) => item.id === id);
+                  setToDelete(medicine || null);
+                }}
+                onTaken={(id) => handleTakenMedicine(id)}
               />
             ))}
           </div>
@@ -184,14 +208,12 @@ const handleDeleteMedicine = (id) => {
         medicine={form.medicine}
         onClose={() => setForm({ open: false, medicine: null })}
         onSubmit={handleMedicineSubmit}
-        
       />
       <ConfirmDialog
         open={!!toDelete}
         onClose={() => setToDelete(null)}
         onConfirm={() => handleDeleteMedicine(toDelete?.id)}
         title="Delete medicine?"
-        
         description={`${toDelete?.name ?? ""} ${toDelete?.strength ?? ""} and its schedule will be removed. This can't be undone.`}
       />
     </>

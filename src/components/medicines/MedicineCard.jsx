@@ -38,7 +38,7 @@ export default function MedicineCard({
 
   // Progress relative to a 30-day supply.
   const stockPercentage = dailyUsage > 0
-    ? Math.min((stock / (dailyUsage * 30)) * 100, 100)
+    ? Math.min((stock / (dailyUsage * 60)) * 100, 100)
     : 0;
 
   return (
@@ -96,7 +96,7 @@ export default function MedicineCard({
           <Button
             size="sm"
             icon={Check}
-            onClick={() => onTaken(m)}
+            onClick={() => onTaken(m.id)}
           >
             Log dose
           </Button>
