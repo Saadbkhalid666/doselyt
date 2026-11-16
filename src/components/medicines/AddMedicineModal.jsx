@@ -66,52 +66,31 @@ export default function AddMedicineModal({
     }));
   };
 
-  const handleSubmit = () => {
-    if (!form.name.trim()) {
-      alert('Please enter a medicine name.');
-      return;
-    }
+ const handleSubmit = () => {
+  if (!form.name.trim()) {
+    alert('Please enter a medicine name.');
+    return;
+  }
 
-    const now = new Date().toISOString();
+  const now = new Date().toISOString();
 
-    const medicineData = {
-      id: medicine?.id || crypto.randomUUID(),
-      name: form.name.trim(),
-      strength: `${form.strength} ${form.unit}`,
-      form: form.form,
-      stock: Number(form.stock) || 0,
-      priority: form.priority,
-      frequency: form.frequency,
-      quantityPerAdministration:
-        Number(form.quantityPerAdministration) || 1,
-      scheduledTimes: form.scheduledTimes,
-      createdAt: medicine?.createdAt || now,
-      updatedAt: now,
-    };
-
-    try {
-      const medicines = getMedicines();
-
-      const updatedMedicines = medicine
-        ? medicines.map(item =>
-            item.id === medicine.id ? medicineData : item
-          )
-        : [...medicines, medicineData];
-
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(updatedMedicines)
-      );
-
-      // Notify the parent component so it can update the dashboard.
-      onSubmit?.(medicineData);
-
-      onClose();
-    } catch (error) {
-      console.error('Failed to save medicine:', error);
-      alert('Unable to save medicine. Please try again.');
-    }
+  const medicineData = {
+    id: medicine?.id || crypto.randomUUID(),
+    name: form.name.trim(),
+    strength: `${form.strength} ${form.unit}`,
+    form: form.form,
+    stock: Number(form.stock) || 0,
+    priority: form.priority,
+    frequency: form.frequency,
+    quantityPerAdministration:
+      Number(form.quantityPerAdministration) || 1,
+    scheduledTimes: form.scheduledTimes,
+    createdAt: medicine?.createdAt || now,
+    updatedAt: now,
   };
+
+  onSubmit?.(medicineData);
+};
 
   return (
     <Modal
