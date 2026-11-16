@@ -114,7 +114,7 @@ export default function MedicineCard({
           <IconButton
             icon={Trash2}
             label={`Delete ${m.name} ${m.strength}`}
-            onClick={() => onDelete?.(m)}
+            onClick={() => onDelete?.(m.id)}
             className="hover:!text-crit"
           />
         </div>

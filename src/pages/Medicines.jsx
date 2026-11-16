@@ -39,6 +39,34 @@ export default function Medicines() {
     }
   });
 
+  const list = medicines.filter((medicine) => {
+  const matchesSearch =
+    medicine.name.toLowerCase().includes(search.trim().toLowerCase()) ||
+    medicine.strength?.toLowerCase().includes(search.trim().toLowerCase()) ||
+    medicine.form?.toLowerCase().includes(search.trim().toLowerCase());
+
+  const matchesPriority =
+    priority === "all" || medicine.priority === priority;
+
+  return matchesSearch && matchesPriority;
+});
+ 
+
+const handleDeleteMedicine = (id) => {
+  setMedicines((prev) => {
+    const updated = prev.filter((medicine) => medicine.id !== id);
+
+    localStorage.setItem(
+      "doselyt_medicines",
+      JSON.stringify(updated)
+    );
+
+    return updated;
+  });
+
+  setToDelete(null);
+};
+
   const handleMedicineSubmit = (savedMedicine) => {
     setMedicines((prev) => {
       const exists = prev.some((m) => m.id === savedMedicine.id);
@@ -56,7 +84,7 @@ export default function Medicines() {
   };
 
   // The search + priority controls are UI only: filter `medicines` yourself using `search` and `priority`.
-  const list = Array.isArray(medicines) ? medicines : [];
+  // const list = Array.isArray(medicines) ? medicines : [];
 
   return (
     <>
@@ -139,7 +167,10 @@ export default function Medicines() {
                 key={m.id}
                 medicine={m}
                 onEdit={(med) => setForm({ open: true, medicine: med })}
-                onDelete={setToDelete}
+               onDelete={(id) => {
+  const medicine = medicines.find((item) => item.id === id);
+  setToDelete(medicine || null);
+}}
                 onTaken={(med) => console.log("Taken", med)}
               />
             ))}
@@ -153,12 +184,14 @@ export default function Medicines() {
         medicine={form.medicine}
         onClose={() => setForm({ open: false, medicine: null })}
         onSubmit={handleMedicineSubmit}
+        
       />
       <ConfirmDialog
         open={!!toDelete}
         onClose={() => setToDelete(null)}
-        onConfirm={() => setToDelete(null)}
+        onConfirm={() => handleDeleteMedicine(toDelete?.id)}
         title="Delete medicine?"
+        
         description={`${toDelete?.name ?? ""} ${toDelete?.strength ?? ""} and its schedule will be removed. This can't be undone.`}
       />
     </>
