@@ -17,7 +17,7 @@ const legend = { iconType: 'circle', iconSize: 8, verticalAlign: 'top', align: '
 const cursor = { fill: 'rgb(161 161 170 / 0.12)' };
 
 export default function Analytics() {
-  const loading = useSimulatedLoad();
+  const loading = useSimulatedLoad(); 
   const [range, setRange] = useState('30d');
 
   return (

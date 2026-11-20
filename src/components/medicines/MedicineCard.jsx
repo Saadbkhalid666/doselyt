@@ -22,6 +22,7 @@ export default function MedicineCard({
   const dailyUsage =
     quantityPerAdministration * administrationsPerDay;
 
+  const dailyUsageForSyrups = m.frequency;
   const daysLeft = dailyUsage > 0
     ? Math.floor(stock / dailyUsage)
     : 0;
@@ -40,6 +41,13 @@ export default function MedicineCard({
   const stockPercentage = dailyUsage > 0
     ? Math.min((stock / (dailyUsage * 60)) * 100, 100)
     : 0;
+
+  //checking the type of medicine
+    const isSyrup =
+      String(m.form || "")
+        .toLowerCase()
+        .includes("syrup");
+  
 
   return (
     <article className="flex flex-col rounded-lg border border-line bg-surface p-4 shadow-card transition-colors hover:border-muted/40">
@@ -60,39 +68,42 @@ export default function MedicineCard({
 
         <PriorityBadge priority={m.priority} />
       </header>
-
+{isSyrup ? null :
       <StockIndicator
-        className="mt-4"
-        stock={stock}
-        unit="units"
-        pct={stockPercentage}
-        status={stockStatus}
+      className="mt-4"
+      stock={stock}
+      unit="units"
+      pct={stockPercentage}
+      status={stockStatus}
       />
+    }
 
       <dl className="mt-4 grid grid-cols-3 gap-2 border-t border-line pt-3 text-xs">
 
         <div>
           <dt className="text-muted">Daily use</dt>
           <dd className="mt-0.5 font-medium">
-            {dailyUsage} units
+            {isSyrup ? dailyUsageForSyrups : dailyUsage} {isSyrup ? null : 'units'}
           </dd>
         </div>
-
+{isSyrup ?  null : 
         <div>
           <dt className="text-muted">Days left</dt>
           <dd className="mt-0.5 font-medium">
             {daysLeft} days
           </dd>
         </div>
+}
 
         <div className="flex items-end justify-end">
-          <StockBadge status={stockStatus} />
+        {isSyrup ?  null : <StockBadge status={stockStatus} />}
         </div>
 
       </dl>
 
       <footer className="mt-4 flex items-center justify-between">
-        {onTaken ? (
+       
+        {onTaken && !isSyrup  ? (
           <Button
             size="sm"
             icon={Check}

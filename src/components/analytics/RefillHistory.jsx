@@ -21,7 +21,7 @@ export default function RefillHistory({ items = [] }) {
                   <td className="px-3 py-2.5 text-right"><span className="rounded bg-ok/10 px-2 py-0.5 text-xs font-medium text-ok">{r.status}</span></td>
                 </tr>
               ))}
-            </tbody>
+            </tbody> 
           </table>
         </div>
       )}

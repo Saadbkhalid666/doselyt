@@ -14,4 +14,4 @@ export default function AdherenceCard({ data }) {
       </dl>
     </section>
   );
-}
+} 
