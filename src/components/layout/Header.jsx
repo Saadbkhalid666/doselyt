@@ -9,7 +9,7 @@ const SETTINGS_KEY = "doselyt_settings";
 function getProfileName(profile) {
   if (typeof profile === "string") return profile;
 
-  if (profile && typeof profile.displayName === "string") {
+  if (profile && typeof profile?.displayName === "string") {
     return profile.displayName;
   }
 

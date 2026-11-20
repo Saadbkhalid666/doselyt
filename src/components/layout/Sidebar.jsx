@@ -29,8 +29,8 @@ export default function Sidebar({ current, onNavigate, profile }) {
       </nav>
       <div className="border-t border-line p-3">
         <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-subtle text-xs font-medium">{setting.displayName?.charAt(0).toUpperCase()}</span>
-          <span className="truncate text-sm text-muted">{setting.displayName ? setting.displayName : "Unknown"}</span>
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-subtle text-xs font-medium">{setting?.displayName?.charAt(0).toUpperCase()}</span>
+          <span className="truncate text-sm text-muted">{setting?.displayName ? setting.displayName : "Unknown"}</span>
         </div>
       </div>
     </aside>
