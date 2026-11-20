@@ -15,7 +15,12 @@ export default function ScheduleCard({ item, onTaken }) {
       <div className="mt-3 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h4 className="truncate text-[15px] font-medium">{item.name} <span className="font-normal text-muted">{item.strength}</span></h4>
-          <p className="mt-0.5 text-xs text-muted">Take {item.quantity} · {item.stock} left</p>
+          <p className="mt-0.5 text-xs text-muted">
+  Take {item.quantity}
+  {item.stock !== null && item.stock !== undefined
+    ? ` · ${item.stock} left`
+    : ""}
+</p>
         </div>
         <PriorityBadge priority={item.priority} />
       </div>
