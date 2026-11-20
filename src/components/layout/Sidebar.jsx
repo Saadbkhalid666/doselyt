@@ -11,6 +11,7 @@ export function Logo() {
 }
 
 export default function Sidebar({ current, onNavigate, profile }) {
+  const setting = JSON.parse(localStorage.getItem("doselyt_settings"));
   return (
     <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r border-line bg-surface lg:flex">
       <div className="flex h-14 items-center border-b border-line px-5"><Logo /></div>
@@ -28,8 +29,8 @@ export default function Sidebar({ current, onNavigate, profile }) {
       </nav>
       <div className="border-t border-line p-3">
         <div className="flex items-center gap-2.5 rounded-md px-2.5 py-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-subtle text-xs font-medium">{profile.initials}</span>
-          <span className="truncate text-sm text-muted">{profile.name}</span>
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-subtle text-xs font-medium">{setting.displayName?.charAt(0).toUpperCase()}</span>
+          <span className="truncate text-sm text-muted">{setting.displayName}</span>
         </div>
       </div>
     </aside>
