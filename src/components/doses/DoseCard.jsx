@@ -11,6 +11,11 @@ import { StockBadge } from "../shared/Badges.jsx";
 import ProgressBar from "../shared/ProgressBar.jsx";
 import Button, { IconButton } from "../shared/Button.jsx";
 
+// Identify syrup medicines.
+function isSyrup(form) {
+  return String(form || "").toLowerCase().includes("syrup");
+}
+
 // Calculate inventory and remaining supply for a medicine.
 function calculateMedicineStock(doseMedicine, inventory) {
   const medicine = inventory.find(
@@ -26,18 +31,35 @@ function calculateMedicineStock(doseMedicine, inventory) {
       daysRemaining: 0,
       stockStatus: "Out of Stock",
       missing: true,
+      isSyrup: false,
+    };
+  }
+
+  const syrup = isSyrup(medicine.form);
+
+  // Syrups do not have stock or quantity tracking.
+  if (syrup) {
+    return {
+      ...doseMedicine,
+      name: medicine.name,
+      strength: medicine.strength,
+      form: medicine.form,
+      stock: null,
+      dailyUsage: null,
+      daysRemaining: null,
+      stockStatus: "Not Tracked",
+      missing: false,
+      isSyrup: true,
     };
   }
 
   const stock = Math.max(0, Number(medicine.stock) || 0);
 
-  // Quantity required per administration.
   const quantity = Math.max(
     0,
     Number(doseMedicine.quantity) || 0
   );
 
-  // Number of administrations per day.
   const administrationsPerDay =
     Array.isArray(doseMedicine.times) &&
     doseMedicine.times.length > 0
@@ -73,6 +95,7 @@ function calculateMedicineStock(doseMedicine, inventory) {
     daysRemaining,
     stockStatus,
     missing: false,
+    isSyrup: false,
   };
 }
 
@@ -100,9 +123,14 @@ export default function DoseCard({
     calculateMedicineStock(item, medicines)
   );
 
+  // Only stock-tracked medicines affect availability.
+  const trackedMedicines = calculatedMedicines.filter(
+    (medicine) => !medicine.isSyrup
+  );
+
   // Medicine with the lowest remaining supply.
-  const lowest = calculatedMedicines.length
-    ? calculatedMedicines.reduce((previous, current) =>
+  const lowest = trackedMedicines.length
+    ? trackedMedicines.reduce((previous, current) =>
         current.daysRemaining < previous.daysRemaining
           ? current
           : previous
@@ -123,7 +151,7 @@ export default function DoseCard({
     ? `${availabilityDays} ${
         availabilityDays === 1 ? "day" : "days"
       }`
-    : "Not calculated";
+    : "Not tracked";
 
   const availabilityPct = lowest
     ? Math.min(
@@ -132,22 +160,26 @@ export default function DoseCard({
       )
     : 0;
 
-  const doseStatus = !lowest
-    ? null
-    : lowest.stockStatus;
+  const doseStatus = lowest
+    ? lowest.stockStatus
+    : null;
 
   const tone = lowest
     ? getProgressTone(availabilityDays)
     : "accent";
 
-  // Prevent logging if any medicine has insufficient stock.
+  // Syrups are excluded from stock validation.
+  // Missing or insufficient stock in other medicines blocks logging.
   const canLogDose =
     calculatedMedicines.length > 0 &&
     calculatedMedicines.every(
       (medicine) =>
-        !medicine.missing &&
-        medicine.dailyUsage > 0 &&
-        medicine.stock >= medicine.dailyUsage
+        medicine.isSyrup ||
+        (
+          !medicine.missing &&
+          medicine.dailyUsage > 0 &&
+          medicine.stock >= medicine.dailyUsage
+        )
     );
 
   return (
@@ -197,18 +229,25 @@ export default function DoseCard({
               </p>
 
               <p className="text-xs text-muted">
-                {medicine.quantity} per administration ·{" "}
-                {medicine.frequency || "Daily"}
+                {medicine.isSyrup
+                  ? `${medicine.form} · Stock not tracked`
+                  : `${medicine.quantity} per administration · ${
+                      medicine.frequency || "Daily"
+                    }`}
               </p>
 
-              <p className="mt-1 text-xs text-muted">
-                Available stock: {medicine.stock}
-              </p>
+              {!medicine.isSyrup && (
+                <>
+                  <p className="mt-1 text-xs text-muted">
+                    Available stock: {medicine.stock}
+                  </p>
 
-              <p className="mt-0.5 text-xs text-muted">
-                {medicine.dailyUsage} units daily ·{" "}
-                {medicine.daysRemaining} days remaining
-              </p>
+                  <p className="mt-0.5 text-xs text-muted">
+                    {medicine.dailyUsage} units daily ·{" "}
+                    {medicine.daysRemaining} days remaining
+                  </p>
+                </>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-1">
@@ -236,25 +275,25 @@ export default function DoseCard({
       {/* Stock Summary */}
       <footer className="space-y-3 p-5 pt-4">
 
-        <div>
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-xs text-muted">
-              Full regimen available for
-            </span>
-
-            <span className="text-sm font-semibold">
-              {availability}
-            </span>
-          </div>
-
-          <ProgressBar
-            value={availabilityPct}
-            tone={tone}
-          />
-        </div>
-
-        {lowest && (
+        {lowest ? (
           <>
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <span className="text-xs text-muted">
+                  Full regimen available for
+                </span>
+
+                <span className="text-sm font-semibold">
+                  {availability}
+                </span>
+              </div>
+
+              <ProgressBar
+                value={availabilityPct}
+                tone={tone}
+              />
+            </div>
+
             <div className="flex items-center justify-between gap-2 rounded-md bg-subtle/60 px-3 py-2">
               <span className="flex items-center gap-1.5 text-xs text-muted">
                 <TrendingDown className="h-3.5 w-3.5" />
@@ -274,6 +313,10 @@ export default function DoseCard({
               <StockBadge status={doseStatus} />
             </div>
           </>
+        ) : (
+          <p className="text-center text-xs text-muted">
+            Stock tracking is not applicable to this regimen.
+          </p>
         )}
 
         {/* Log Dose */}
