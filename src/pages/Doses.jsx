@@ -15,6 +15,7 @@ import useSimulatedLoad from "../hooks/useSimulatedLoad.js";
 
 const MEDICINES_KEY = "doselyt_medicines";
 const DOSES_KEY = "doselyt_doses";
+const TRANSACTIONS_KEY = "doselyt_transactions";
 
 const readStorage = (key) => {
   try {
@@ -138,14 +139,21 @@ export default function Doses() {
   // Log one complete day's dose.
   
 // Log one complete day's dose.
-const handleLogDose = (dose) => {
-  const requirements = new Map();
 
+const handleLogDose = (dose) => {
   const doseMedicines = Array.isArray(dose.medicines)
     ? dose.medicines
     : [];
 
-  // Calculate daily stock requirements.
+  if (doseMedicines.length === 0) {
+    showNotification("This dose has no medicines.");
+    return;
+  }
+
+  const requirements = new Map();
+  const now = new Date().toISOString();
+
+  // Validate medicines and calculate inventory requirements.
   for (const item of doseMedicines) {
     const medicine = medicines.find(
       (med) => med.id === item.medicineId
@@ -156,93 +164,133 @@ const handleLogDose = (dose) => {
       return;
     }
 
-    // Syrups do not have stock or quantity tracking.
     const isSyrup = String(medicine.form || "")
       .toLowerCase()
       .includes("syrup");
 
-    if (isSyrup) continue;
-
     const quantity = Number(item.quantity);
 
     if (!Number.isFinite(quantity) || quantity <= 0) {
-      showNotification(
-        `Invalid quantity for ${medicine.name}.`
-      );
+      showNotification(`Invalid quantity for ${medicine.name}.`);
       return;
     }
 
-    // Calculate administrations per day.
-    const administrationsPerDay =
+    const administrations =
       Array.isArray(item.times) && item.times.length > 0
         ? item.times.length
         : 1;
 
-    const dailyQuantity = quantity * administrationsPerDay;
+    const totalQuantity = quantity * administrations;
 
-    requirements.set(
-      item.medicineId,
-      (requirements.get(item.medicineId) || 0) + dailyQuantity
-    );
+    if (!isSyrup) {
+      requirements.set(
+        item.medicineId,
+        (requirements.get(item.medicineId) || 0) + totalQuantity
+      );
+    }
   }
 
-  // Validate stock before deducting anything.
+  // Prepare updated inventory.
   const updatedMedicines = medicines.map((medicine) => ({
     ...medicine,
   }));
 
   for (const [medicineId, requiredQuantity] of requirements) {
-    const medicineIndex = updatedMedicines.findIndex(
+    const index = updatedMedicines.findIndex(
       (medicine) => medicine.id === medicineId
     );
 
-    if (medicineIndex === -1) {
-      showNotification("A medicine in this dose no longer exists.");
-      return;
-    }
-
-    const medicine = updatedMedicines[medicineIndex];
+    const medicine = updatedMedicines[index];
     const available = Number(medicine.stock);
 
     if (
       !Number.isFinite(available) ||
       available < requiredQuantity
     ) {
-      showNotification(
-        `Insufficient stock for ${medicine.name}.`
-      );
+      showNotification(`Insufficient stock for ${medicine.name}.`);
       return;
     }
 
-    updatedMedicines[medicineIndex] = {
+    updatedMedicines[index] = {
       ...medicine,
       stock: available - requiredQuantity,
     };
   }
 
-  // Syrup-only regimens are valid too.
-  // They simply do not require inventory deductions.
-  if (requirements.size === 0) {
-    showNotification(`${dose.name} logged successfully.`);
-    return;
-  }
+  // Create a transaction for every medicine, including syrups.
+  const transactions = doseMedicines.map((item) => {
+    const medicine = medicines.find(
+      (med) => med.id === item.medicineId
+    );
 
-  // Save inventory.
+    const administrations =
+      Array.isArray(item.times) && item.times.length > 0
+        ? item.times.length
+        : 1;
+
+    return {
+      id: crypto.randomUUID(),
+      type: "dose",
+      status: "completed",
+
+      doseId: dose.id,
+      doseName: dose.name,
+
+      medicineId: medicine.id,
+      medicine: medicine.name,
+      strength: medicine.strength,
+
+      quantity: Number(item.quantity) * administrations,
+      administrations,
+      times: item.times || [],
+
+      date: now,
+    };
+  });
+
+  // Persist inventory and transaction history.
   try {
+    const previousTransactions = JSON.parse(
+      localStorage.getItem(TRANSACTIONS_KEY) || "[]"
+    );
+
+    if (!Array.isArray(previousTransactions)) {
+      throw new Error("Invalid transaction history.");
+    }
+
     localStorage.setItem(
       MEDICINES_KEY,
       JSON.stringify(updatedMedicines)
     );
+
+    localStorage.setItem(
+      TRANSACTIONS_KEY,
+      JSON.stringify([
+        ...previousTransactions,
+        ...transactions,
+      ])
+    );
+
+    setMedicines(updatedMedicines);
+
+    showNotification(`${dose.name} logged successfully.`);
   } catch (error) {
-    console.error("Unable to update inventory:", error);
-    showNotification("Unable to save inventory. Please try again.");
-    return;
+    console.error("Unable to save dose transaction:", error);
+
+    // Restore previous inventory if saving history fails.
+    try {
+      localStorage.setItem(
+        MEDICINES_KEY,
+        JSON.stringify(medicines)
+      );
+    } catch (rollbackError) {
+      console.error("Inventory rollback failed:", rollbackError);
+    }
+
+    showNotification("Unable to save dose. Please try again.");
   }
-
-  setMedicines(updatedMedicines);
-
-  showNotification(`${dose.name} logged successfully.`);
 };
+
 
 
   const handleDelete = () => {
