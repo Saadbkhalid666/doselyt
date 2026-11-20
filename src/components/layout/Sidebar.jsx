@@ -5,7 +5,7 @@ export function Logo() {
   return (
     <div className="flex items-center gap-2.5">
       <span className="flex h-7 w-7 items-center justify-center rounded-md bg-accent text-bg"><Pill className="h-4 w-4 -rotate-45" strokeWidth={2} /></span>
-      <span className="text-[15px] font-semibold tracking-tight">MedStock</span>
+      <span className="text-[15px] font-semibold tracking-tight">Doselyt</span>
     </div>
   );
 }
