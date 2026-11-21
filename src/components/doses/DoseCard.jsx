@@ -11,12 +11,29 @@ import { StockBadge } from "../shared/Badges.jsx";
 import ProgressBar from "../shared/ProgressBar.jsx";
 import Button, { IconButton } from "../shared/Button.jsx";
 
-// Identify syrup medicines.
 function isSyrup(form) {
   return String(form || "").toLowerCase().includes("syrup");
 }
 
-// Calculate inventory and remaining supply for a medicine.
+function getAdministrations(item) {
+  if (
+    Array.isArray(item.administrations) &&
+    item.administrations.length > 0
+  ) {
+    return item.administrations;
+  }
+
+  const times =
+    Array.isArray(item.times) && item.times.length
+      ? item.times
+      : ["08:00"];
+
+  return times.map((time) => ({
+    time,
+    quantity: Number(item.quantity) || 1,
+  }));
+}
+
 function calculateMedicineStock(doseMedicine, inventory) {
   const medicine = inventory.find(
     (item) => item.id === doseMedicine.medicineId
@@ -32,12 +49,20 @@ function calculateMedicineStock(doseMedicine, inventory) {
       stockStatus: "Out of Stock",
       missing: true,
       isSyrup: false,
+      administrations: getAdministrations(doseMedicine),
     };
   }
 
   const syrup = isSyrup(medicine.form);
 
-  // Syrups do not have stock or quantity tracking.
+  const administrations = getAdministrations(doseMedicine);
+
+  const dailyUsage = administrations.reduce(
+    (total, administration) =>
+      total + Math.max(0, Number(administration.quantity) || 0),
+    0
+  );
+
   if (syrup) {
     return {
       ...doseMedicine,
@@ -45,28 +70,16 @@ function calculateMedicineStock(doseMedicine, inventory) {
       strength: medicine.strength,
       form: medicine.form,
       stock: null,
-      dailyUsage: null,
+      dailyUsage,
       daysRemaining: null,
       stockStatus: "Not Tracked",
       missing: false,
       isSyrup: true,
+      administrations,
     };
   }
 
   const stock = Math.max(0, Number(medicine.stock) || 0);
-
-  const quantity = Math.max(
-    0,
-    Number(doseMedicine.quantity) || 0
-  );
-
-  const administrationsPerDay =
-    Array.isArray(doseMedicine.times) &&
-    doseMedicine.times.length > 0
-      ? doseMedicine.times.length
-      : 1;
-
-  const dailyUsage = quantity * administrationsPerDay;
 
   const daysRemaining =
     dailyUsage > 0
@@ -96,10 +109,10 @@ function calculateMedicineStock(doseMedicine, inventory) {
     stockStatus,
     missing: false,
     isSyrup: false,
+    administrations,
   };
 }
 
-// Get progress bar tone.
 function getProgressTone(daysRemaining) {
   if (daysRemaining < 3) return "crit";
   if (daysRemaining < 5) return "warn";
@@ -123,12 +136,10 @@ export default function DoseCard({
     calculateMedicineStock(item, medicines)
   );
 
-  // Only stock-tracked medicines affect availability.
   const trackedMedicines = calculatedMedicines.filter(
-    (medicine) => !medicine.isSyrup
+    (medicine) => !medicine.isSyrup && !medicine.missing
   );
 
-  // Medicine with the lowest remaining supply.
   const lowest = trackedMedicines.length
     ? trackedMedicines.reduce((previous, current) =>
         current.daysRemaining < previous.daysRemaining
@@ -141,7 +152,7 @@ export default function DoseCard({
 
   const dailyAdministrations = calculatedMedicines.reduce(
     (total, medicine) =>
-      total + (medicine.times?.length || 1),
+      total + medicine.administrations.length,
     0
   );
 
@@ -160,32 +171,29 @@ export default function DoseCard({
       )
     : 0;
 
-  const doseStatus = lowest
-    ? lowest.stockStatus
-    : null;
+  const doseStatus = lowest?.stockStatus;
 
   const tone = lowest
     ? getProgressTone(availabilityDays)
     : "accent";
 
-  // Syrups are excluded from stock validation.
-  // Missing or insufficient stock in other medicines blocks logging.
   const canLogDose =
     calculatedMedicines.length > 0 &&
     calculatedMedicines.every(
       (medicine) =>
-        medicine.isSyrup ||
+        !medicine.missing &&
         (
-          !medicine.missing &&
-          medicine.dailyUsage > 0 &&
-          medicine.stock >= medicine.dailyUsage
+          medicine.isSyrup ||
+          (
+            medicine.dailyUsage > 0 &&
+            medicine.stock >= medicine.dailyUsage
+          )
         )
     );
 
   return (
     <article className="flex flex-col rounded-lg border border-line bg-surface shadow-card">
 
-      {/* Header */}
       <header className="flex items-start justify-between gap-3 p-5 pb-4">
         <div className="min-w-0">
           <h3 className="text-base font-semibold tracking-tight">
@@ -213,12 +221,11 @@ export default function DoseCard({
         </div>
       </header>
 
-      {/* Medicine List */}
       <ul className="divide-y divide-line border-y border-line">
         {calculatedMedicines.map((medicine, index) => (
           <li
             key={medicine.medicineId || index}
-            className="flex flex-col gap-3 px-5 py-3 sm:flex-row sm:items-center sm:justify-between"
+            className="flex flex-col gap-3 px-5 py-3"
           >
             <div className="min-w-0">
               <p className="truncate text-sm font-medium">
@@ -231,12 +238,12 @@ export default function DoseCard({
               <p className="text-xs text-muted">
                 {medicine.isSyrup
                   ? `${medicine.form} · Stock not tracked`
-                  : `${medicine.quantity} per administration · ${
+                  : `${medicine.dailyUsage} units daily · ${
                       medicine.frequency || "Daily"
                     }`}
               </p>
 
-              {!medicine.isSyrup && (
+              {!medicine.isSyrup && !medicine.missing && (
                 <>
                   <p className="mt-1 text-xs text-muted">
                     Available stock: {medicine.stock}
@@ -248,19 +255,33 @@ export default function DoseCard({
                   </p>
                 </>
               )}
+
+              {medicine.missing && (
+                <p className="mt-1 text-xs text-crit">
+                  This medicine is missing from inventory.
+                </p>
+              )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-1">
-              <Clock className="mr-0.5 h-3 w-3 text-muted" />
+            <div className="space-y-1.5">
+              {medicine.administrations.map(
+                (administration, i) => (
+                  <div
+                    key={`${administration.time}-${i}`}
+                    className="flex items-center justify-between rounded bg-subtle/50 px-2.5 py-1.5"
+                  >
+                    <span className="flex items-center gap-1.5 text-xs text-muted">
+                      <Clock className="h-3 w-3" />
+                      {administration.time}
+                    </span>
 
-              {(medicine.times || []).map((time, i) => (
-                <span
-                  key={`${time}-${i}`}
-                  className="rounded bg-subtle px-1.5 py-0.5 text-xs text-muted"
-                >
-                  {time}
-                </span>
-              ))}
+                    <span className="text-xs font-medium">
+                      {administration.quantity}{" "}
+                      {medicine.isSyrup ? "ml" : "units"}
+                    </span>
+                  </div>
+                )
+              )}
             </div>
           </li>
         ))}
@@ -272,9 +293,7 @@ export default function DoseCard({
         )}
       </ul>
 
-      {/* Stock Summary */}
       <footer className="space-y-3 p-5 pt-4">
-
         {lowest ? (
           <>
             <div>
@@ -319,7 +338,6 @@ export default function DoseCard({
           </p>
         )}
 
-        {/* Log Dose */}
         <div className="border-t border-line pt-3">
           <Button
             variant="primary"
@@ -329,16 +347,15 @@ export default function DoseCard({
             disabled={!canLogDose}
             className="w-full"
           >
-            Log Dose
+            Log Daily Dose
           </Button>
 
           {!canLogDose && calculatedMedicines.length > 0 && (
             <p className="mt-2 text-center text-xs text-crit">
-              Insufficient stock or invalid medicine quantity.
+              Insufficient stock or a missing medicine.
             </p>
           )}
         </div>
-
       </footer>
     </article>
   );
