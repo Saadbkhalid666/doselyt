@@ -5,6 +5,7 @@ import { Plus, Layers } from "lucide-react";
 import PageHeading from "../components/shared/PageHeading.jsx";
 import Button from "../components/shared/Button.jsx";
 import EmptyState from "../components/shared/EmptyState.jsx";
+
 import { CardGridSkeleton } from "../components/shared/Skeleton.jsx";
 import { ConfirmDialog } from "../components/shared/Modal.jsx";
 
@@ -19,12 +20,52 @@ const TRANSACTIONS_KEY = "doselyt_transactions";
 
 const readStorage = (key) => {
   try {
-    const data = JSON.parse(localStorage.getItem(key) || "[]");
+    const data = JSON.parse(
+      localStorage.getItem(key) || "[]"
+    );
+
     return Array.isArray(data) ? data : [];
   } catch {
     return [];
   }
 };
+
+function normalizeAdministrations(item) {
+  if (
+    Array.isArray(item.administrations) &&
+    item.administrations.length > 0
+  ) {
+    return item.administrations.map((administration) => ({
+      time: administration.time,
+      quantity: Number(administration.quantity) || 1,
+    }));
+  }
+
+  const times =
+    Array.isArray(item.times) && item.times.length
+      ? item.times
+      : ["08:00"];
+
+  return times.map((time) => ({
+    time,
+    quantity: Number(item.quantity) || 1,
+  }));
+}
+
+function normalizeDose(dose) {
+  return {
+    ...dose,
+
+    medicines: (dose.medicines || []).map((item) => ({
+      ...item,
+      administrations: normalizeAdministrations(item),
+    })),
+  };
+}
+
+function isSyrup(form) {
+  return String(form || "").toLowerCase().includes("syrup");
+}
 
 export default function Doses() {
   const loading = useSimulatedLoad();
@@ -34,7 +75,7 @@ export default function Doses() {
   );
 
   const [doses, setDoses] = useState(() =>
-    readStorage(DOSES_KEY)
+    readStorage(DOSES_KEY).map(normalizeDose)
   );
 
   const [doseForm, setDoseForm] = useState({
@@ -45,7 +86,7 @@ export default function Doses() {
   const [toDelete, setToDelete] = useState(null);
   const [notification, setNotification] = useState("");
 
-  // Sync medicines and doses across browser tabs.
+  // Synchronize browser tabs.
   useEffect(() => {
     const syncStorage = (event) => {
       if (event.key === MEDICINES_KEY) {
@@ -53,7 +94,9 @@ export default function Doses() {
       }
 
       if (event.key === DOSES_KEY) {
-        setDoses(readStorage(DOSES_KEY));
+        setDoses(
+          readStorage(DOSES_KEY).map(normalizeDose)
+        );
       }
     };
 
@@ -64,10 +107,13 @@ export default function Doses() {
     };
   }, []);
 
-  // Persist doses.
+  // Persist normalized doses.
   useEffect(() => {
     try {
-      localStorage.setItem(DOSES_KEY, JSON.stringify(doses));
+      localStorage.setItem(
+        DOSES_KEY,
+        JSON.stringify(doses)
+      );
     } catch (error) {
       console.error("Unable to save doses:", error);
     }
@@ -112,14 +158,16 @@ export default function Doses() {
     );
 
     if (validItems.length === 0) {
-      alert("Please add at least one medicine from My Medicines.");
+      alert(
+        "Please add at least one medicine from My Medicines."
+      );
       return;
     }
 
-    const updatedDose = {
+    const updatedDose = normalizeDose({
       ...doseData,
       medicines: validItems,
-    };
+    });
 
     setDoses((previous) => {
       const exists = previous.some(
@@ -128,7 +176,9 @@ export default function Doses() {
 
       return exists
         ? previous.map((dose) =>
-            dose.id === updatedDose.id ? updatedDose : dose
+            dose.id === updatedDose.id
+              ? updatedDose
+              : dose
           )
         : [...previous, updatedDose];
     });
@@ -136,168 +186,206 @@ export default function Doses() {
     closeDoseForm();
   };
 
-  // Log one complete day's dose.
-  
-// Log one complete day's dose.
+  // Log one complete daily regimen.
+  const handleLogDose = (dose) => {
+    const doseMedicines = Array.isArray(dose.medicines)
+      ? dose.medicines
+      : [];
 
-const handleLogDose = (dose) => {
-  const doseMedicines = Array.isArray(dose.medicines)
-    ? dose.medicines
-    : [];
-
-  if (doseMedicines.length === 0) {
-    showNotification("This dose has no medicines.");
-    return;
-  }
-
-  const requirements = new Map();
-  const now = new Date().toISOString();
-
-  // Validate medicines and calculate inventory requirements.
-  for (const item of doseMedicines) {
-    const medicine = medicines.find(
-      (med) => med.id === item.medicineId
-    );
-
-    if (!medicine) {
-      showNotification("A medicine in this dose no longer exists.");
+    if (doseMedicines.length === 0) {
+      showNotification("This dose has no medicines.");
       return;
     }
 
-    const isSyrup = String(medicine.form || "")
-      .toLowerCase()
-      .includes("syrup");
+    const requirements = new Map();
+    const now = new Date().toISOString();
 
-    const quantity = Number(item.quantity);
+    const normalizedItems = doseMedicines.map((item) => ({
+      ...item,
+      administrations: normalizeAdministrations(item),
+    }));
 
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      showNotification(`Invalid quantity for ${medicine.name}.`);
-      return;
-    }
-
-    const administrations =
-      Array.isArray(item.times) && item.times.length > 0
-        ? item.times.length
-        : 1;
-
-    const totalQuantity = quantity * administrations;
-
-    if (!isSyrup) {
-      requirements.set(
-        item.medicineId,
-        (requirements.get(item.medicineId) || 0) + totalQuantity
+    // Validate and calculate daily requirements.
+    for (const item of normalizedItems) {
+      const medicine = medicines.find(
+        (med) => med.id === item.medicineId
       );
-    }
-  }
 
-  // Prepare updated inventory.
-  const updatedMedicines = medicines.map((medicine) => ({
-    ...medicine,
-  }));
+      if (!medicine) {
+        showNotification(
+          "A medicine in this dose no longer exists."
+        );
+        return;
+      }
 
-  for (const [medicineId, requiredQuantity] of requirements) {
-    const index = updatedMedicines.findIndex(
-      (medicine) => medicine.id === medicineId
-    );
+      const administrations = item.administrations;
 
-    const medicine = updatedMedicines[index];
-    const available = Number(medicine.stock);
+      if (
+        administrations.length === 0 ||
+        administrations.some(
+          (administration) =>
+            !Number.isFinite(Number(administration.quantity)) ||
+            Number(administration.quantity) <= 0
+        )
+      ) {
+        showNotification(
+          `Invalid administration quantity for ${medicine.name}.`
+        );
+        return;
+      }
 
-    if (
-      !Number.isFinite(available) ||
-      available < requiredQuantity
-    ) {
-      showNotification(`Insufficient stock for ${medicine.name}.`);
-      return;
-    }
+      const totalQuantity = administrations.reduce(
+        (total, administration) =>
+          total + Number(administration.quantity),
+        0
+      );
 
-    updatedMedicines[index] = {
-      ...medicine,
-      stock: available - requiredQuantity,
-    };
-  }
-
-  // Create a transaction for every medicine, including syrups.
-  const transactions = doseMedicines.map((item) => {
-    const medicine = medicines.find(
-      (med) => med.id === item.medicineId
-    );
-
-    const administrations =
-      Array.isArray(item.times) && item.times.length > 0
-        ? item.times.length
-        : 1;
-
-    return {
-      id: crypto.randomUUID(),
-      type: "dose",
-      status: "completed",
-
-      doseId: dose.id,
-      doseName: dose.name,
-
-      medicineId: medicine.id,
-      medicine: medicine.name,
-      strength: medicine.strength,
-
-      quantity: Number(item.quantity) * administrations,
-      administrations,
-      times: item.times || [],
-
-      date: now,
-    };
-  });
-
-  // Persist inventory and transaction history.
-  try {
-    const previousTransactions = JSON.parse(
-      localStorage.getItem(TRANSACTIONS_KEY) || "[]"
-    );
-
-    if (!Array.isArray(previousTransactions)) {
-      throw new Error("Invalid transaction history.");
+      if (!isSyrup(medicine.form)) {
+        requirements.set(
+          medicine.id,
+          (requirements.get(medicine.id) || 0) +
+            totalQuantity
+        );
+      }
     }
 
-    localStorage.setItem(
-      MEDICINES_KEY,
-      JSON.stringify(updatedMedicines)
+    // Prepare inventory updates.
+    const updatedMedicines = medicines.map(
+      (medicine) => ({ ...medicine })
     );
 
-    localStorage.setItem(
-      TRANSACTIONS_KEY,
-      JSON.stringify([
-        ...previousTransactions,
-        ...transactions,
-      ])
-    );
+    for (const [medicineId, requiredQuantity] of requirements) {
+      const index = updatedMedicines.findIndex(
+        (medicine) => medicine.id === medicineId
+      );
 
-    setMedicines(updatedMedicines);
+      const medicine = updatedMedicines[index];
+      const available = Number(medicine.stock);
 
-    showNotification(`${dose.name} logged successfully.`);
-  } catch (error) {
-    console.error("Unable to save dose transaction:", error);
+      if (
+        !Number.isFinite(available) ||
+        available < requiredQuantity
+      ) {
+        showNotification(
+          `Insufficient stock for ${medicine.name}. Required: ${requiredQuantity}, available: ${available || 0}.`
+        );
+        return;
+      }
 
-    // Restore previous inventory if saving history fails.
+      updatedMedicines[index] = {
+        ...medicine,
+        stock: available - requiredQuantity,
+        updatedAt: now,
+      };
+    }
+
+    // Create detailed transaction history.
+    const transactions = normalizedItems.map((item) => {
+      const medicine = medicines.find(
+        (med) => med.id === item.medicineId
+      );
+
+      const totalQuantity = item.administrations.reduce(
+        (total, administration) =>
+          total + Number(administration.quantity),
+        0
+      );
+
+      return {
+        id: crypto.randomUUID(),
+
+        type: "dose",
+        status: "completed",
+
+        doseId: dose.id,
+        doseName: dose.name,
+
+        medicineId: medicine.id,
+        medicine: medicine.name,
+        strength: medicine.strength,
+
+        quantity: totalQuantity,
+
+        administrations: item.administrations.length,
+
+        administrationDetails: item.administrations.map(
+          (administration) => ({
+            time: administration.time,
+            quantity: Number(administration.quantity),
+          })
+        ),
+
+        times: item.administrations.map(
+          (administration) => administration.time
+        ),
+
+        date: now,
+      };
+    });
+
+    // Persist inventory and transactions.
+    let previousTransactions;
+
     try {
+      previousTransactions = readStorage(TRANSACTIONS_KEY);
+
       localStorage.setItem(
         MEDICINES_KEY,
-        JSON.stringify(medicines)
+        JSON.stringify(updatedMedicines)
       );
-    } catch (rollbackError) {
-      console.error("Inventory rollback failed:", rollbackError);
+
+      localStorage.setItem(
+        TRANSACTIONS_KEY,
+        JSON.stringify([
+          ...previousTransactions,
+          ...transactions,
+        ])
+      );
+
+      setMedicines(updatedMedicines);
+
+      showNotification(
+        `${dose.name} logged successfully.`
+      );
+    } catch (error) {
+      console.error(
+        "Unable to save dose transaction:",
+        error
+      );
+
+      // Restore inventory if saving failed.
+      try {
+        localStorage.setItem(
+          MEDICINES_KEY,
+          JSON.stringify(medicines)
+        );
+
+        if (previousTransactions) {
+          localStorage.setItem(
+            TRANSACTIONS_KEY,
+            JSON.stringify(previousTransactions)
+          );
+        }
+      } catch (rollbackError) {
+        console.error(
+          "Transaction rollback failed:",
+          rollbackError
+        );
+      }
+
+      showNotification(
+        "Unable to save dose. Please try again."
+      );
     }
-
-    showNotification("Unable to save dose. Please try again.");
-  }
-};
-
-
+  };
 
   const handleDelete = () => {
     if (!toDelete) return;
 
     setDoses((previous) =>
-      previous.filter((dose) => dose.id !== toDelete.id)
+      previous.filter(
+        (dose) => dose.id !== toDelete.id
+      )
     );
 
     setToDelete(null);
@@ -307,7 +395,7 @@ const handleLogDose = (dose) => {
     <>
       <PageHeading
         title="My Doses"
-        description="Group medicines you take together into a named regimen. Regimens reference your existing medicines."
+        description="Group medicines you take together into a named regimen. Configure individual quantities for every administration."
         actions={
           <Button
             variant="primary"
