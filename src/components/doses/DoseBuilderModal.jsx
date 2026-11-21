@@ -362,7 +362,10 @@ export default function DoseBuilderModal({
                       Scheduled times
                     </span>
 
-                    <TimeChips
+                   <TimeChips
+                      key={`${item.medicineId}-${item.administrations
+                        .map((administration) => administration.time)
+                        .join("-")}`}
                       initial={item.administrations.map(
                         (administration) => administration.time
                       )}
