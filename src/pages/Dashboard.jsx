@@ -13,11 +13,27 @@ import ScheduleSection from "../components/dashboard/ScheduleSection.jsx";
 import RefillAlerts from "../components/dashboard/RefillAlerts.jsx";
 import InventoryOverview from "../components/dashboard/InventoryOverview.jsx";
 import InventoryChart from "../components/dashboard/InventoryChart.jsx";
+import {
+  MEDICINES_KEY,
+  DOSES_KEY,
+  TRANSACTIONS_KEY,
+  getSchedule,
+  getDailyConsumption,
+  isSyrup,
+} from "../utils/medicine.js";
+import {
+  getDaysLeft,
+  getFrequency,
+  isAlternate,
+  isAsNeeded,
+  isScheduledToday,
+} from "../utils/frequency.js";
 
+// Same storage keys as the Medicines and Doses pages, so every page reads the same data.
 const KEYS = {
-  medicines: "doselyt_medicines",
-  doses: "doselyt_doses",
-  transactions: "doselyt_transactions",
+  medicines: MEDICINES_KEY,
+  doses: DOSES_KEY,
+  transactions: TRANSACTIONS_KEY,
   settings: "doselyt_settings",
 };
 
@@ -121,28 +137,22 @@ function getPeriod(time) {
   return "night";
 }
 
-function getDailyUsage(doses, medicines) {
+const isCompleted = (transaction) =>
+  !transaction.status || transaction.status === "completed";
+
+// Dashboard logs use `date`; logs from the Medicines/Doses pages may only have `createdAt`.
+const txDate = (transaction) => transaction.date || transaction.createdAt || null;
+
+// Average units used per day, from each medicine's own schedule and frequency.
+// Syrup and as-needed medicines have no forecast.
+function getDailyUsage(medicines) {
   const usage = {};
 
-  doses.forEach((dose) => {
-    (dose.medicines || []).forEach((item) => {
-      const medicineId = item.medicineId;
-      if (!medicineId) return;
+  medicines.forEach((medicine) => {
+    if (isSyrup(medicine) || isAsNeeded(medicine)) return;
 
-      const medicine = medicines.find((m) => m.id === medicineId);
-
-      if (!medicine || medicine.form?.toLowerCase() === "syrup") return;
-
-      const times =
-        Array.isArray(item.times) && item.times.length
-          ? item.times
-          : medicine.scheduledTimes || [];
-
-      const quantity = Number(item.quantity) || 1;
-
-      usage[medicineId] =
-        (usage[medicineId] || 0) + quantity * times.length;
-    });
+    const daily = Number(getDailyConsumption(medicine)) || 0;
+    if (daily > 0) usage[medicine.id] = isAlternate(medicine) ? daily / 2 : daily;
   });
 
   return usage;
@@ -152,16 +162,14 @@ function hasTaken(transactions, medicineId, time, dateKey) {
   return transactions.some((transaction) => {
     if (
       transaction.type !== "dose" ||
-      transaction.status !== "completed" ||
-      transaction.medicineId !== medicineId ||
-      !transaction.date
+      !isCompleted(transaction) ||
+      transaction.medicineId !== medicineId
     ) {
       return false;
     }
 
-    if (getDateKey(new Date(transaction.date)) !== dateKey) {
-      return false;
-    }
+    const date = txDate(transaction);
+    if (!date || getDateKey(new Date(date)) !== dateKey) return false;
 
     const recordedTimes = Array.isArray(transaction.times)
       ? transaction.times
@@ -169,8 +177,28 @@ function hasTaken(transactions, medicineId, time, dateKey) {
         ? [transaction.time]
         : [];
 
-    return recordedTimes.includes(time);
+    // "Log dose" / "Log daily dose" entries carry no times and cover the whole day.
+    return recordedTimes.length === 0 || recordedTimes.includes(time);
   });
+}
+
+// Times and quantities for one medicine: legacy per-dose times first, then its own schedule.
+function getEntries(medicine, item) {
+  if (item && Array.isArray(item.times) && item.times.length) {
+    return item.times.map((time) => ({ time, quantity: Number(item.quantity) || 1 }));
+  }
+
+  const entries = getSchedule(medicine);
+  if (Array.isArray(entries) && entries.length) return entries;
+
+  if (Array.isArray(medicine.scheduledTimes) && medicine.scheduledTimes.length) {
+    return medicine.scheduledTimes.map((time) => ({
+      time,
+      quantity: Number(medicine.quantityPerAdministration) || 1,
+    }));
+  }
+
+  return [];
 }
 
 function buildSchedule({ medicines, doses, transactions }) {
@@ -186,108 +214,58 @@ function buildSchedule({ medicines, doses, transactions }) {
 
   const seen = new Set();
 
-  doses.forEach((dose) => {
-    (dose.medicines || []).forEach((item) => {
-      const medicine = medicines.find(
-        (m) => m.id === item.medicineId
-      );
+  const addItems = (medicine, dose, entries) => {
+    // Syrup and as-needed medicines have no fixed times; alternate-day ones only show on dose days.
+    if (isSyrup(medicine) || isAsNeeded(medicine) || !isScheduledToday(medicine)) return;
 
-      if (!medicine) return;
+    entries.forEach(({ time, quantity }) => {
+      if (!time) return;
 
-      const times =
-        Array.isArray(item.times) && item.times.length
-          ? item.times
-          : medicine.scheduledTimes || [];
-
-      times.forEach((time) => {
-        const uniqueKey = `${medicine.id}-${time}`;
-
-        if (seen.has(uniqueKey)) return;
-        seen.add(uniqueKey);
-
-        const taken = hasTaken(
-          transactions,
-          medicine.id,
-          time,
-          today
-        );
-
-        const status = taken
-          ? "taken"
-          : time < currentTime
-            ? "missed"
-            : "due";
-
-        const period = getPeriod(time);
-
-        groups[period].push({
-          id: uniqueKey,
-          medicineId: medicine.id,
-          doseId: dose.id,
-          doseName: dose.name,
-          name: medicine.name,
-          strength: medicine.strength || "",
-          form: medicine.form || "",
-          quantity: Number(item.quantity) || 1,
-          time,
-          displayTime: formatTime(time),
-          status,
-          priority: medicine.priority || "normal",
-          stock:
-            medicine.form?.toLowerCase() === "syrup"
-              ? null
-              : Number.isFinite(Number(medicine.stock))
-                ? Number(medicine.stock)
-                : null,
-        });
-      });
-    });
-  });
-
-  // Fallback: support medicines without a dose group.
-  medicines.forEach((medicine) => {
-    const times = medicine.scheduledTimes || [];
-
-    times.forEach((time) => {
       const uniqueKey = `${medicine.id}-${time}`;
-
       if (seen.has(uniqueKey)) return;
       seen.add(uniqueKey);
 
-      const taken = hasTaken(
-        transactions,
-        medicine.id,
-        time,
-        today
-      );
+      const taken = hasTaken(transactions, medicine.id, time, today);
 
-      const period = getPeriod(time);
+      const status = taken
+        ? "taken"
+        : time < currentTime
+          ? "missed"
+          : "due";
 
-      groups[period].push({
+      groups[getPeriod(time)].push({
         id: uniqueKey,
         medicineId: medicine.id,
-        doseId: null,
-        doseName: "Daily medication",
+        doseId: dose?.id ?? null,
+        doseName: dose?.name || "Daily medication",
         name: medicine.name,
         strength: medicine.strength || "",
         form: medicine.form || "",
-        quantity: Number(medicine.quantityPerAdministration) || 1,
+        quantity: Number(quantity) || 1,
         time,
         displayTime: formatTime(time),
-        status: taken
-          ? "taken"
-          : time < currentTime
-            ? "missed"
-            : "due",
+        status,
         priority: medicine.priority || "normal",
-        stock:
-          medicine.form?.toLowerCase() === "syrup"
-            ? null
-            : Number.isFinite(Number(medicine.stock))
-              ? Number(medicine.stock)
-              : null,
+        stock: Number.isFinite(Number(medicine.stock)) ? Number(medicine.stock) : null,
+        frequency: getFrequency(medicine),
+        daysLeft: getDaysLeft(medicine),
       });
     });
+  };
+
+  doses.forEach((dose) => {
+    (dose.medicines || []).forEach((item) => {
+      const id = typeof item === "string" ? item : item.medicineId || item.id;
+      const medicine = medicines.find((m) => m.id === id);
+      if (!medicine) return;
+
+      addItems(medicine, dose, getEntries(medicine, typeof item === "object" ? item : null));
+    });
+  });
+
+  // Medicines that are not in any dose group still appear on their own schedule.
+  medicines.forEach((medicine) => {
+    addItems(medicine, null, getEntries(medicine, null));
   });
 
   return Object.entries(groups)
@@ -304,7 +282,7 @@ function buildInventory(medicines, usage, threshold) {
   return medicines
     .filter(
       (medicine) =>
-        medicine.form?.toLowerCase() !== "syrup" &&
+        !isSyrup(medicine) &&
         Number.isFinite(Number(medicine.stock))
     )
     .map((medicine) => {
@@ -352,7 +330,7 @@ function buildInventoryTrend(medicines, transactions) {
 
   const trackedMedicines = medicines.filter(
     (medicine) =>
-      medicine.form?.toLowerCase() !== "syrup" &&
+      !isSyrup(medicine) &&
       Number.isFinite(Number(medicine.stock))
   );
 
@@ -360,6 +338,11 @@ function buildInventoryTrend(medicines, transactions) {
     (sum, medicine) => sum + Number(medicine.stock),
     0
   );
+
+  const quantityFor = (transaction) => {
+    const medicine = trackedMedicines.find((m) => m.id === transaction.medicineId);
+    return medicine ? Number(transaction.quantity) || 0 : 0;
+  };
 
   const days = [];
 
@@ -373,51 +356,29 @@ function buildInventoryTrend(medicines, transactions) {
       .filter(
         (transaction) =>
           transaction.type === "dose" &&
-          transaction.status === "completed" &&
-          transaction.date &&
-          getDateKey(new Date(transaction.date)) === key
+          isCompleted(transaction) &&
+          txDate(transaction) &&
+          getDateKey(new Date(txDate(transaction))) === key
       )
-      .reduce((sum, transaction) => {
-        const medicine = trackedMedicines.find(
-          (m) => m.id === transaction.medicineId
-        );
-
-        return medicine
-          ? sum + (Number(transaction.quantity) || 0)
-          : sum;
-      }, 0);
+      .reduce((sum, transaction) => sum + quantityFor(transaction), 0);
 
     // Reconstruct historical stock using recorded transactions.
-    const futureTransactions = transactions.filter(
-      (transaction) =>
-        transaction.date &&
-        getDateKey(new Date(transaction.date)) > key &&
-        getDateKey(new Date(transaction.date)) <= todayKey
-    );
+    const futureTransactions = transactions.filter((transaction) => {
+      const date = txDate(transaction);
+      return (
+        date &&
+        getDateKey(new Date(date)) > key &&
+        getDateKey(new Date(date)) <= todayKey
+      );
+    });
 
     const futureConsumption = futureTransactions
       .filter((transaction) => transaction.type === "dose")
-      .reduce((sum, transaction) => {
-        const medicine = trackedMedicines.find(
-          (m) => m.id === transaction.medicineId
-        );
-
-        return medicine
-          ? sum + (Number(transaction.quantity) || 0)
-          : sum;
-      }, 0);
+      .reduce((sum, transaction) => sum + quantityFor(transaction), 0);
 
     const futureRefills = futureTransactions
       .filter((transaction) => transaction.type === "refill")
-      .reduce((sum, transaction) => {
-        const medicine = trackedMedicines.find(
-          (m) => m.id === transaction.medicineId
-        );
-
-        return medicine
-          ? sum + (Number(transaction.quantity) || 0)
-          : sum;
-      }, 0);
+      .reduce((sum, transaction) => sum + quantityFor(transaction), 0);
 
     days.push({
       day: new Intl.DateTimeFormat("en-US", {
@@ -441,12 +402,16 @@ export default function Dashboard({ onNavigate }) {
   useEffect(() => {
     const refresh = () => setData(readSnapshot());
 
+    window.addEventListener("focus", refresh);
     window.addEventListener("storage", refresh);
     window.addEventListener("doselyt:storage", refresh);
+    window.addEventListener("doselyt:medicines-updated", refresh);
 
     return () => {
+      window.removeEventListener("focus", refresh);
       window.removeEventListener("storage", refresh);
       window.removeEventListener("doselyt:storage", refresh);
+      window.removeEventListener("doselyt:medicines-updated", refresh);
     };
   }, []);
 
@@ -462,7 +427,7 @@ export default function Dashboard({ onNavigate }) {
     Number(settings.lowStockThreshold) || 14
   );
 
-  const usage = getDailyUsage(doses, medicines);
+  const usage = getDailyUsage(medicines);
 
   const schedule = buildSchedule({
     medicines,
@@ -561,13 +526,10 @@ export default function Dashboard({ onNavigate }) {
       return;
     }
 
-    const isSyrup =
-      medicine.form?.toLowerCase() === "syrup";
-
     const quantity = Number(item.quantity) || 1;
 
     const tracksStock =
-      !isSyrup && typeof medicine.stock === "number";
+      !isSyrup(medicine) && typeof medicine.stock === "number";
 
     if (
       tracksStock &&
@@ -580,12 +542,15 @@ export default function Dashboard({ onNavigate }) {
     }
 
     const updatedMedicines = current.medicines.map((m) => {
-      if (m.id !== medicine.id || !tracksStock) return m;
+      if (m.id !== medicine.id) return m;
+
+      const now = new Date().toISOString();
 
       return {
         ...m,
-        stock: m.stock - quantity,
-        updatedAt: new Date().toISOString(),
+        ...(tracksStock ? { stock: m.stock - quantity } : {}),
+        lastLoggedAt: now,
+        updatedAt: now,
       };
     });
 

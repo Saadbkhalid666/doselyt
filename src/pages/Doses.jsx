@@ -1,473 +1,116 @@
-
 import { useEffect, useState } from "react";
-import { Plus, Layers } from "lucide-react";
-
+import { Layers, Plus } from "lucide-react";
 import PageHeading from "../components/shared/PageHeading.jsx";
 import Button from "../components/shared/Button.jsx";
-import EmptyState from "../components/shared/EmptyState.jsx";
-
-import { CardGridSkeleton } from "../components/shared/Skeleton.jsx";
-import { ConfirmDialog } from "../components/shared/Modal.jsx";
-
-import DoseCard from "../components/doses/DoseCard.jsx";
 import DoseBuilderModal from "../components/doses/DoseBuilderModal.jsx";
-
-import useSimulatedLoad from "../hooks/useSimulatedLoad.js";
-
-const MEDICINES_KEY = "doselyt_medicines";
-const DOSES_KEY = "doselyt_doses";
-const TRANSACTIONS_KEY = "doselyt_transactions";
-
-const readStorage = (key) => {
-  try {
-    const data = JSON.parse(
-      localStorage.getItem(key) || "[]"
-    );
-
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
-};
-
-function normalizeAdministrations(item) {
-  if (
-    Array.isArray(item.administrations) &&
-    item.administrations.length > 0
-  ) {
-    return item.administrations.map((administration) => ({
-      time: administration.time,
-      quantity: Number(administration.quantity) || 1,
-    }));
-  }
-
-  const times =
-    Array.isArray(item.times) && item.times.length
-      ? item.times
-      : ["08:00"];
-
-  return times.map((time) => ({
-    time,
-    quantity: Number(item.quantity) || 1,
-  }));
-}
-
-function normalizeDose(dose) {
-  return {
-    ...dose,
-
-    medicines: (dose.medicines || []).map((item) => ({
-      ...item,
-      administrations: normalizeAdministrations(item),
-    })),
-  };
-}
-
-function isSyrup(form) {
-  return String(form || "").toLowerCase().includes("syrup");
-}
+import DoseCard from "../components/doses/DoseCard.jsx";
+import { DOSES_KEY, MEDICINES_KEY, TRANSACTIONS_KEY, normalizeDose, readArray, writeArray, getSchedule, isSyrup } from "../utils/medicine.js";
+import { isAsNeeded } from "../utils/frequency.js";
 
 export default function Doses() {
-  const loading = useSimulatedLoad();
+  const [doses, setDoses] = useState(() => readArray(DOSES_KEY).map(normalizeDose));
+  const [medicines, setMedicines] = useState(() => readArray(MEDICINES_KEY));
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingDose, setEditingDose] = useState(null);
 
-  const [medicines, setMedicines] = useState(() =>
-    readStorage(MEDICINES_KEY)
-  );
-
-  const [doses, setDoses] = useState(() =>
-    readStorage(DOSES_KEY).map(normalizeDose)
-  );
-
-  const [doseForm, setDoseForm] = useState({
-    open: false,
-    dose: null,
-  });
-
-  const [toDelete, setToDelete] = useState(null);
-  const [notification, setNotification] = useState("");
-
-  // Synchronize browser tabs.
+  useEffect(() => writeArray(DOSES_KEY, doses), [doses]);
   useEffect(() => {
-    const syncStorage = (event) => {
-      if (event.key === MEDICINES_KEY) {
-        setMedicines(readStorage(MEDICINES_KEY));
-      }
-
-      if (event.key === DOSES_KEY) {
-        setDoses(
-          readStorage(DOSES_KEY).map(normalizeDose)
-        );
-      }
-    };
-
-    window.addEventListener("storage", syncStorage);
-
+    const refresh = () => setMedicines(readArray(MEDICINES_KEY));
+    window.addEventListener("focus", refresh);
+    window.addEventListener("storage", refresh);
+    window.addEventListener("doselyt:medicines-updated", refresh);
     return () => {
-      window.removeEventListener("storage", syncStorage);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener("doselyt:medicines-updated", refresh);
     };
   }, []);
 
-  // Persist normalized doses.
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        DOSES_KEY,
-        JSON.stringify(doses)
-      );
-    } catch (error) {
-      console.error("Unable to save doses:", error);
+  const saveDose = (dose) => {
+    setDoses((prev) => {
+      const exists = prev.some((item) => item.id === dose.id);
+      return exists ? prev.map((item) => item.id === dose.id ? dose : item) : [dose, ...prev];
+    });
+    setModalOpen(false);
+    setEditingDose(null);
+  };
+
+  const deleteDose = (dose) => {
+    if (!window.confirm(`Delete dose "${dose.name}"?`)) return;
+    setDoses((prev) => prev.filter((item) => item.id !== dose.id));
+  };
+
+  const logDose = (dose) => {
+    const inventory = readArray(MEDICINES_KEY);
+    const transactions = readArray(TRANSACTIONS_KEY);
+    const updates = [];
+    for (const item of dose.medicines || []) {
+      const medicine = inventory.find((entry) => entry.id === item.medicineId);
+      if (!medicine || isSyrup(medicine) || isAsNeeded(medicine)) continue;
+      const total = getSchedule(medicine).reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0);
+      if (total > 0) updates.push({ medicineId: medicine.id, quantity: total });
     }
-  }, [doses]);
-
-  const showNotification = (message) => {
-    setNotification(message);
-
-    window.setTimeout(() => {
-      setNotification("");
-    }, 3000);
-  };
-
-  const create = () => {
-    setDoseForm({
-      open: true,
-      dose: null,
+    const insufficient = updates.find((entry) => {
+      const medicine = inventory.find((item) => item.id === entry.medicineId);
+      return Number(medicine.stock) < entry.quantity;
     });
-  };
-
-  const editDose = (dose) => {
-    setDoseForm({
-      open: true,
-      dose,
-    });
-  };
-
-  const closeDoseForm = () => {
-    setDoseForm({
-      open: false,
-      dose: null,
-    });
-  };
-
-  const handleDoseSubmit = (doseData) => {
-    const validMedicineIds = new Set(
-      medicines.map((medicine) => medicine.id)
-    );
-
-    const validItems = doseData.medicines.filter((item) =>
-      validMedicineIds.has(item.medicineId)
-    );
-
-    if (validItems.length === 0) {
-      alert(
-        "Please add at least one medicine from My Medicines."
-      );
+    if (insufficient) {
+      const medicine = inventory.find((item) => item.id === insufficient.medicineId);
+      alert(`Insufficient stock for ${medicine.name}. No stock was changed.`);
       return;
     }
 
-    const updatedDose = normalizeDose({
-      ...doseData,
-      medicines: validItems,
-    });
-
-    setDoses((previous) => {
-      const exists = previous.some(
-        (dose) => dose.id === updatedDose.id
-      );
-
-      return exists
-        ? previous.map((dose) =>
-            dose.id === updatedDose.id
-              ? updatedDose
-              : dose
-          )
-        : [...previous, updatedDose];
-    });
-
-    closeDoseForm();
-  };
-
-  // Log one complete daily regimen.
-  const handleLogDose = (dose) => {
-    const doseMedicines = Array.isArray(dose.medicines)
-      ? dose.medicines
-      : [];
-
-    if (doseMedicines.length === 0) {
-      showNotification("This dose has no medicines.");
-      return;
-    }
-
-    const requirements = new Map();
     const now = new Date().toISOString();
-
-    const normalizedItems = doseMedicines.map((item) => ({
-      ...item,
-      administrations: normalizeAdministrations(item),
-    }));
-
-    // Validate and calculate daily requirements.
-    for (const item of normalizedItems) {
-      const medicine = medicines.find(
-        (med) => med.id === item.medicineId
-      );
-
-      if (!medicine) {
-        showNotification(
-          "A medicine in this dose no longer exists."
-        );
-        return;
-      }
-
-      const administrations = item.administrations;
-
-      if (
-        administrations.length === 0 ||
-        administrations.some(
-          (administration) =>
-            !Number.isFinite(Number(administration.quantity)) ||
-            Number(administration.quantity) <= 0
-        )
-      ) {
-        showNotification(
-          `Invalid administration quantity for ${medicine.name}.`
-        );
-        return;
-      }
-
-      const totalQuantity = administrations.reduce(
-        (total, administration) =>
-          total + Number(administration.quantity),
-        0
-      );
-
-      if (!isSyrup(medicine.form)) {
-        requirements.set(
-          medicine.id,
-          (requirements.get(medicine.id) || 0) +
-            totalQuantity
-        );
-      }
-    }
-
-    // Prepare inventory updates.
-    const updatedMedicines = medicines.map(
-      (medicine) => ({ ...medicine })
-    );
-
-    for (const [medicineId, requiredQuantity] of requirements) {
-      const index = updatedMedicines.findIndex(
-        (medicine) => medicine.id === medicineId
-      );
-
-      const medicine = updatedMedicines[index];
-      const available = Number(medicine.stock);
-
-      if (
-        !Number.isFinite(available) ||
-        available < requiredQuantity
-      ) {
-        showNotification(
-          `Insufficient stock for ${medicine.name}. Required: ${requiredQuantity}, available: ${available || 0}.`
-        );
-        return;
-      }
-
-      updatedMedicines[index] = {
-        ...medicine,
-        stock: available - requiredQuantity,
-        updatedAt: now,
-      };
-    }
-
-    // Create detailed transaction history.
-    const transactions = normalizedItems.map((item) => {
-      const medicine = medicines.find(
-        (med) => med.id === item.medicineId
-      );
-
-      const totalQuantity = item.administrations.reduce(
-        (total, administration) =>
-          total + Number(administration.quantity),
-        0
-      );
-
-      return {
+    const updatedInventory = inventory.map((medicine) => {
+      const used = updates.find((entry) => entry.medicineId === medicine.id);
+      if (!used) return medicine;
+      transactions.push({
         id: crypto.randomUUID(),
-
-        type: "dose",
-        status: "completed",
-
-        doseId: dose.id,
-        doseName: dose.name,
-
         medicineId: medicine.id,
-        medicine: medicine.name,
-        strength: medicine.strength,
-
-        quantity: totalQuantity,
-
-        administrations: item.administrations.length,
-
-        administrationDetails: item.administrations.map(
-          (administration) => ({
-            time: administration.time,
-            quantity: Number(administration.quantity),
-          })
-        ),
-
-        times: item.administrations.map(
-          (administration) => administration.time
-        ),
-
+        type: "dose",
+        quantity: used.quantity,
+        doseId: dose.id,
+        status: "completed",
         date: now,
-      };
+        source: "doses",
+        createdAt: now,
+      });
+      return { ...medicine, stock: Number(medicine.stock) - used.quantity, lastLoggedAt: now, updatedAt: now };
     });
-
-    // Persist inventory and transactions.
-    let previousTransactions;
-
-    try {
-      previousTransactions = readStorage(TRANSACTIONS_KEY);
-
-      localStorage.setItem(
-        MEDICINES_KEY,
-        JSON.stringify(updatedMedicines)
-      );
-
-      localStorage.setItem(
-        TRANSACTIONS_KEY,
-        JSON.stringify([
-          ...previousTransactions,
-          ...transactions,
-        ])
-      );
-
-      setMedicines(updatedMedicines);
-
-      showNotification(
-        `${dose.name} logged successfully.`
-      );
-    } catch (error) {
-      console.error(
-        "Unable to save dose transaction:",
-        error
-      );
-
-      // Restore inventory if saving failed.
-      try {
-        localStorage.setItem(
-          MEDICINES_KEY,
-          JSON.stringify(medicines)
-        );
-
-        if (previousTransactions) {
-          localStorage.setItem(
-            TRANSACTIONS_KEY,
-            JSON.stringify(previousTransactions)
-          );
-        }
-      } catch (rollbackError) {
-        console.error(
-          "Transaction rollback failed:",
-          rollbackError
-        );
-      }
-
-      showNotification(
-        "Unable to save dose. Please try again."
-      );
-    }
-  };
-
-  const handleDelete = () => {
-    if (!toDelete) return;
-
-    setDoses((previous) =>
-      previous.filter(
-        (dose) => dose.id !== toDelete.id
-      )
-    );
-
-    setToDelete(null);
+    writeArray(MEDICINES_KEY, updatedInventory);
+    writeArray(TRANSACTIONS_KEY, transactions);
+    setMedicines(updatedInventory);
+    alert("Daily dose logged and stock updated.");
   };
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeading
-        title="My Doses"
-        description="Group medicines you take together into a named regimen. Configure individual quantities for every administration."
-        actions={
-          <Button
-            variant="primary"
-            icon={Plus}
-            onClick={create}
-          >
-            Create dose
-          </Button>
-        }
+        title="Doses"
+        description="Group existing medicines into named regimens."
+        action={<Button variant="primary" icon={Plus} onClick={() => { setEditingDose(null); setModalOpen(true); }}>Create dose</Button>}
       />
-
-      {notification && (
-        <div
-          role="status"
-          className="mb-4 rounded-xl border border-accent/20 bg-accent/10 px-4 py-3 text-sm text-ink"
-        >
-          {notification}
-        </div>
-      )}
-
-      {loading ? (
-        <CardGridSkeleton
-          count={2}
-          cols="lg:grid-cols-2"
-          height="h-96"
-        />
-      ) : doses.length === 0 ? (
-        <EmptyState
-          icon={Layers}
-          title="No doses yet"
-          description="Combine medicines you already track into a regimen you can follow each day."
-          action={
-            <Button
-              variant="primary"
-              icon={Plus}
-              onClick={create}
-              disabled={medicines.length === 0}
-            >
-              Create dose
-            </Button>
-          }
-        />
-      ) : (
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      {doses.length ? (
+        <div className="grid items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
           {doses.map((dose) => (
             <DoseCard
               key={dose.id}
               dose={dose}
               medicines={medicines}
-              onEdit={editDose}
-              onDelete={setToDelete}
-              onLogDose={handleLogDose}
+              onEdit={(item) => { setEditingDose(item); setModalOpen(true); }}
+              onDelete={deleteDose}
+              onLogDose={logDose}
             />
           ))}
         </div>
+      ) : (
+        <div className="flex flex-col items-center rounded-2xl border border-dashed border-line p-12 text-center">
+          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400"><Layers className="h-6 w-6" /></span>
+          <p className="mt-4 text-sm font-medium">No doses yet</p>
+          <p className="mt-1 text-sm text-muted">Create a dose and select medicines from your inventory.</p>
+        </div>
       )}
-
-      <DoseBuilderModal
-        open={doseForm.open}
-        initialDose={doseForm.dose}
-        medicines={medicines}
-        onClose={closeDoseForm}
-        onSubmit={handleDoseSubmit}
-      />
-
-      <ConfirmDialog
-        open={!!toDelete}
-        onClose={() => setToDelete(null)}
-        onConfirm={handleDelete}
-        title="Delete dose?"
-        description={`"${toDelete?.name ?? ""}" will be removed. The medicines in it stay in My Medicines.`}
-      />
-    </>
+      <DoseBuilderModal open={modalOpen} onClose={() => { setModalOpen(false); setEditingDose(null); }} onSubmit={saveDose} medicines={medicines} initialDose={editingDose} />
+    </div>
   );
 }

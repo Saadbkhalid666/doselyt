@@ -1,362 +1,104 @@
-
-import {
-  Pencil,
-  Trash2,
-  Clock,
-  TrendingDown,
-  Check,
-} from "lucide-react";
-
-import { StockBadge } from "../shared/Badges.jsx";
-import ProgressBar from "../shared/ProgressBar.jsx";
+import { Pencil, Trash2, ClipboardCheck, Layers, AlertTriangle } from "lucide-react";
 import Button, { IconButton } from "../shared/Button.jsx";
+import { StockBar, TONES, getTone } from "../shared/StockBar.jsx";
+import { getSchedule, getDailyConsumption, isSyrup } from "../../utils/medicine.js";
+import { getDaysLeft, isAsNeeded } from "../../utils/frequency.js";
+import FrequencyBadge from "../shared/FrequencyBadge.jsx";
 
-function isSyrup(form) {
-  return String(form || "").toLowerCase().includes("syrup");
-}
-
-function getAdministrations(item) {
-  if (
-    Array.isArray(item.administrations) &&
-    item.administrations.length > 0
-  ) {
-    return item.administrations;
-  }
-
-  const times =
-    Array.isArray(item.times) && item.times.length
-      ? item.times
-      : ["08:00"];
-
-  return times.map((time) => ({
-    time,
-    quantity: Number(item.quantity) || 1,
-  }));
-}
-
-function calculateMedicineStock(doseMedicine, inventory) {
-  const medicine = inventory.find(
-    (item) => item.id === doseMedicine.medicineId
-  );
-
-  if (!medicine) {
-    return {
-      ...doseMedicine,
-      name: "Medicine unavailable",
-      stock: 0,
-      dailyUsage: 0,
-      daysRemaining: 0,
-      stockStatus: "Out of Stock",
-      missing: true,
-      isSyrup: false,
-      administrations: getAdministrations(doseMedicine),
-    };
-  }
-
-  const syrup = isSyrup(medicine.form);
-
-  const administrations = getAdministrations(doseMedicine);
-
-  const dailyUsage = administrations.reduce(
-    (total, administration) =>
-      total + Math.max(0, Number(administration.quantity) || 0),
-    0
-  );
-
-  if (syrup) {
-    return {
-      ...doseMedicine,
-      name: medicine.name,
-      strength: medicine.strength,
-      form: medicine.form,
-      stock: null,
-      dailyUsage,
-      daysRemaining: null,
-      stockStatus: "Not Tracked",
-      missing: false,
-      isSyrup: true,
-      administrations,
-    };
-  }
-
-  const stock = Math.max(0, Number(medicine.stock) || 0);
-
-  const daysRemaining =
-    dailyUsage > 0
-      ? Math.floor(stock / dailyUsage)
-      : 0;
-
-  let stockStatus;
-
-  if (stock <= 0 || dailyUsage <= 0 || daysRemaining < 1) {
-    stockStatus = "Out of Stock";
-  } else if (daysRemaining < 3) {
-    stockStatus = "Critical";
-  } else if (daysRemaining < 5) {
-    stockStatus = "Low Stock";
-  } else {
-    stockStatus = "In Stock";
-  }
-
-  return {
-    ...doseMedicine,
-    name: medicine.name,
-    strength: medicine.strength,
-    form: medicine.form,
-    stock,
-    dailyUsage,
-    daysRemaining,
-    stockStatus,
-    missing: false,
-    isSyrup: false,
-    administrations,
-  };
-}
-
-function getProgressTone(daysRemaining) {
-  if (daysRemaining < 3) return "crit";
-  if (daysRemaining < 5) return "warn";
-  return "accent";
-}
-
-export default function DoseCard({
-  dose,
-  medicines = [],
-  onEdit,
-  onDelete,
-  onLogDose,
-}) {
-  if (!dose) return null;
-
-  const doseMedicines = Array.isArray(dose.medicines)
-    ? dose.medicines
-    : [];
-
-  const calculatedMedicines = doseMedicines.map((item) =>
-    calculateMedicineStock(item, medicines)
-  );
-
-  const trackedMedicines = calculatedMedicines.filter(
-    (medicine) => !medicine.isSyrup && !medicine.missing
-  );
-
-  const lowest = trackedMedicines.length
-    ? trackedMedicines.reduce((previous, current) =>
-        current.daysRemaining < previous.daysRemaining
-          ? current
-          : previous
-      )
-    : null;
-
-  const totalMedicines = calculatedMedicines.length;
-
-  const dailyAdministrations = calculatedMedicines.reduce(
-    (total, medicine) =>
-      total + medicine.administrations.length,
-    0
-  );
-
-  const availabilityDays = lowest?.daysRemaining ?? 0;
-
-  const availability = lowest
-    ? `${availabilityDays} ${
-        availabilityDays === 1 ? "day" : "days"
-      }`
-    : "Not tracked";
-
-  const availabilityPct = lowest
-    ? Math.min(
-        100,
-        Math.max(0, (availabilityDays / 30) * 100)
-      )
-    : 0;
-
-  const doseStatus = lowest?.stockStatus;
-
-  const tone = lowest
-    ? getProgressTone(availabilityDays)
-    : "accent";
-
-  const canLogDose =
-    calculatedMedicines.length > 0 &&
-    calculatedMedicines.every(
-      (medicine) =>
-        !medicine.missing &&
-        (
-          medicine.isSyrup ||
-          (
-            medicine.dailyUsage > 0 &&
-            medicine.stock >= medicine.dailyUsage
-          )
-        )
-    );
+export default function DoseCard({ dose, medicines = [], onEdit, onDelete, onLogDose }) {
+  const resolved = (dose.medicines || []).map((item) => {
+    const id = typeof item === "string" ? item : item.medicineId || item.id;
+    return medicines.find((medicine) => medicine.id === id) || null;
+  });
+  const available = resolved.filter(Boolean);
+  const missing = resolved.length - available.length;
+  const days = available.filter((medicine) => !isSyrup(medicine) && !isAsNeeded(medicine)).map(getDaysLeft).filter((value) => value != null);
+  const regimenDays = days.length ? Math.min(...days) : null;
+  const limiting = regimenDays == null
+    ? null
+    : available.find((medicine) => !isSyrup(medicine) && !isAsNeeded(medicine) && getDaysLeft(medicine) === regimenDays);
+  const regimenTone = TONES[getTone(regimenDays)];
 
   return (
-    <article className="flex flex-col rounded-lg border border-line bg-surface shadow-card">
-
-      <header className="flex items-start justify-between gap-3 p-5 pb-4">
-        <div className="min-w-0">
-          <h3 className="text-base font-semibold tracking-tight">
-            {dose.name || "Untitled dose"}
-          </h3>
-
-          <p className="mt-0.5 text-sm text-muted">
-            {totalMedicines} medicines · {dailyAdministrations} administrations a day
-          </p>
-        </div>
-
-        <div className="-mr-1.5 flex shrink-0">
-          <IconButton
-            icon={Pencil}
-            label={`Edit ${dose.name}`}
-            onClick={() => onEdit?.(dose)}
-          />
-
-          <IconButton
-            icon={Trash2}
-            label={`Delete ${dose.name}`}
-            onClick={() => onDelete?.(dose)}
-            className="hover:!text-crit"
-          />
-        </div>
-      </header>
-
-      <ul className="divide-y divide-line border-y border-line">
-        {calculatedMedicines.map((medicine, index) => (
-          <li
-            key={medicine.medicineId || index}
-            className="flex flex-col gap-3 px-5 py-3"
-          >
+    <article className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
+      <div className="relative p-5 pb-4">
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-indigo-500/10 to-transparent" />
+        <div className="relative flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-indigo-500 text-white shadow-sm">
+              <Layers className="h-5 w-5" />
+            </span>
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium">
-                {medicine.name}{" "}
-                <span className="font-normal text-muted">
-                  {medicine.strength}
-                </span>
-              </p>
+              <h3 className="truncate text-base font-semibold leading-tight">{dose.name}</h3>
+              <p className="mt-0.5 text-xs text-muted">{available.length} medicines</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-1">
+            <IconButton icon={Pencil} label="Edit dose" onClick={() => onEdit?.(dose)} />
+            <IconButton icon={Trash2} label="Delete dose" className="hover:!text-crit" onClick={() => onDelete?.(dose)} />
+          </div>
+        </div>
+      </div>
 
-              <p className="text-xs text-muted">
-                {medicine.isSyrup
-                  ? `${medicine.form} · Stock not tracked`
-                  : `${medicine.dailyUsage} units daily · ${
-                      medicine.frequency || "Daily"
-                    }`}
-              </p>
-
-              {!medicine.isSyrup && !medicine.missing && (
+      <ul className="flex-1 space-y-2.5 px-5">
+        {available.map((medicine) => {
+          const syrup = isSyrup(medicine);
+          const asNeeded = isAsNeeded(medicine);
+          const left = syrup || asNeeded ? null : getDaysLeft(medicine);
+          const tone = TONES[getTone(left)];
+          return (
+            <li key={medicine.id} className="rounded-xl bg-subtle/50 p-3 ring-1 ring-inset ring-line/60">
+              <div className="flex items-start justify-between gap-3">
+                <p className="min-w-0 truncate text-sm font-medium">
+                  {medicine.name} <span className="font-normal text-muted">{medicine.strength}</span>
+                </p>
+                {!syrup && !asNeeded && <span className={`shrink-0 text-xs font-semibold tabular-nums ${tone.text}`}>{left == null ? "—" : `${left}d`}</span>}
+              </div>
+              {syrup ? (
+                <p className="mt-1.5 text-xs text-muted">Syrup · stock not tracked</p>
+              ) : asNeeded ? (
+                <p className="mt-1.5 text-xs text-muted">As needed · not part of the daily log</p>
+              ) : (
                 <>
-                  <p className="mt-1 text-xs text-muted">
-                    Available stock: {medicine.stock}
-                  </p>
-
-                  <p className="mt-0.5 text-xs text-muted">
-                    {medicine.dailyUsage} units daily ·{" "}
-                    {medicine.daysRemaining} days remaining
-                  </p>
+                  <div className="mt-2"><StockBar days={left} size="sm" /></div>
+                  <div className="mt-2"><FrequencyBadge medicine={medicine} /></div>
+                  <div className="mt-2.5 flex flex-wrap gap-1.5">
+                    {getSchedule(medicine).map((entry) => (
+                      <span key={entry.time} className="inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[11px] ring-1 ring-inset ring-line">
+                        <span className="font-medium">{entry.time}</span>
+                        <span className="text-muted">{entry.quantity} per administration</span>
+                      </span>
+                    ))}
+                  </div>
                 </>
               )}
-
-              {medicine.missing && (
-                <p className="mt-1 text-xs text-crit">
-                  This medicine is missing from inventory.
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              {medicine.administrations.map(
-                (administration, i) => (
-                  <div
-                    key={`${administration.time}-${i}`}
-                    className="flex items-center justify-between rounded bg-subtle/50 px-2.5 py-1.5"
-                  >
-                    <span className="flex items-center gap-1.5 text-xs text-muted">
-                      <Clock className="h-3 w-3" />
-                      {administration.time}
-                    </span>
-
-                    <span className="text-xs font-medium">
-                      {administration.quantity}{" "}
-                      {medicine.isSyrup ? "ml" : "units"}
-                    </span>
-                  </div>
-                )
-              )}
-            </div>
-          </li>
-        ))}
-
-        {calculatedMedicines.length === 0 && (
-          <li className="px-5 py-4 text-sm text-muted">
-            No medicines added to this dose.
-          </li>
-        )}
+            </li>
+          );
+        })}
       </ul>
 
-      <footer className="space-y-3 p-5 pt-4">
-        {lowest ? (
-          <>
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-xs text-muted">
-                  Full regimen available for
-                </span>
+      {missing > 0 && (
+        <p className="mx-5 mt-3 flex items-center gap-2 rounded-lg bg-crit/10 px-3 py-2 text-xs text-crit">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          {missing} medicine reference(s) are no longer in My Medicines.
+        </p>
+      )}
 
-                <span className="text-sm font-semibold">
-                  {availability}
-                </span>
-              </div>
-
-              <ProgressBar
-                value={availabilityPct}
-                tone={tone}
-              />
-            </div>
-
-            <div className="flex items-center justify-between gap-2 rounded-md bg-subtle/60 px-3 py-2">
-              <span className="flex items-center gap-1.5 text-xs text-muted">
-                <TrendingDown className="h-3.5 w-3.5" />
-                Lowest stock
-              </span>
-
-              <span className="text-xs font-medium">
-                {lowest.name} {lowest.strength}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-muted">
-                Overall dose status
-              </span>
-
-              <StockBadge status={doseStatus} />
-            </div>
-          </>
-        ) : (
-          <p className="text-center text-xs text-muted">
-            Stock tracking is not applicable to this regimen.
-          </p>
-        )}
-
-        <div className="border-t border-line pt-3">
-          <Button
-            variant="primary"
-            size="sm"
-            icon={Check}
-            onClick={() => onLogDose?.(dose)}
-            disabled={!canLogDose}
-            className="w-full"
-          >
-            Log Daily Dose
-          </Button>
-
-          {!canLogDose && calculatedMedicines.length > 0 && (
-            <p className="mt-2 text-center text-xs text-crit">
-              Insufficient stock or a missing medicine.
-            </p>
-          )}
+      <div className="mt-4 border-t border-line bg-subtle/30 p-5">
+        <div className="mb-2 flex items-end justify-between gap-3">
+          <div>
+            <p className="text-xs text-muted">Regimen stock coverage</p>
+            <p className={`text-xl font-semibold leading-tight ${regimenTone.text}`}>{regimenDays == null ? "—" : `${regimenDays} days`}</p>
+          </div>
+          {limiting && <p className="max-w-[55%] truncate text-right text-xs text-muted">Limited by {limiting.name}</p>}
         </div>
-      </footer>
+        <StockBar days={regimenDays} />
+        {onLogDose && (
+          <Button className="mt-4 w-full" size="sm" variant="accent" icon={ClipboardCheck} onClick={() => onLogDose(dose)}>
+            Log daily dose
+          </Button>
+        )}
+      </div>
     </article>
   );
 }
