@@ -8,11 +8,9 @@ import {
   Field,
   TextInput,
   SelectInput,
-  TimeChips,
 } from "../shared/Form.jsx";
 
 import {
-  frequencyOptions,
   formOptions,
   strengthUnits,
 } from "../../data/mockData.js";
@@ -38,11 +36,9 @@ const priorities = [
   },
 ];
 
-// Identify syrup medicine.
 const isSyrup = (form) =>
   String(form || "").toLowerCase().includes("syrup");
 
-// Initial form values.
 const getInitialForm = (medicine) => {
   const [strength, unit] =
     medicine?.strength?.split(" ") || ["", "mg"];
@@ -54,10 +50,6 @@ const getInitialForm = (medicine) => {
     form: medicine?.form || "",
     stock: medicine?.stock ?? "",
     priority: medicine?.priority || "important",
-    frequency: medicine?.frequency || "Once daily",
-    quantityPerAdministration:
-      medicine?.quantityPerAdministration ?? 1,
-    scheduledTimes: medicine?.scheduledTimes || ["08:00"],
   };
 };
 
@@ -74,7 +66,6 @@ export default function AddMedicineModal({
     getInitialForm(medicine)
   );
 
-  // Reset form when opening or editing another medicine.
   useEffect(() => {
     if (open) {
       setForm(getInitialForm(medicine));
@@ -97,19 +88,13 @@ export default function AddMedicineModal({
     }
 
     const syrup = isSyrup(form.form);
-
-    if (!syrup && Number(form.stock) < 0) {
-      alert("Stock cannot be negative.");
-      return;
-    }
+    const stock = Number(form.stock);
 
     if (
       !syrup &&
-      Number(form.quantityPerAdministration) <= 0
+      (!Number.isFinite(stock) || stock < 0)
     ) {
-      alert(
-        "Quantity per administration must be greater than 0."
-      );
+      alert("Please enter a valid stock quantity.");
       return;
     }
 
@@ -126,21 +111,13 @@ export default function AddMedicineModal({
 
       priority: form.priority,
 
-      frequency: form.frequency,
-
-      scheduledTimes: form.scheduledTimes,
-
       createdAt: medicine?.createdAt || now,
-
       updatedAt: now,
 
-      // Syrups do not track stock or quantity.
       ...(syrup
         ? {}
         : {
-            stock: Number(form.stock) || 0,
-            quantityPerAdministration:
-              Number(form.quantityPerAdministration) || 1,
+            stock,
           }),
     };
 
@@ -155,7 +132,7 @@ export default function AddMedicineModal({
       onClose={onClose}
       size="md"
       title={medicine ? "Edit medicine" : "Add medicine"}
-      description="Register a medicine once, then use it in schedules and dose regimens."
+      description="Register a medicine and manage its available inventory."
       footer={
         <>
           <Button onClick={onClose}>
@@ -173,72 +150,66 @@ export default function AddMedicineModal({
     >
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 
-        {/* Medicine Name */}
         <Field
           label="Medicine name"
           className="sm:col-span-2"
         >
           <TextInput
-            placeholder="e.g. Amlodipine"
+            placeholder="e.g. Mofetyl"
             value={form.name}
-            onChange={(e) =>
-              updateField("name", e)
+            onChange={(value) =>
+              updateField("name", value)
             }
           />
         </Field>
 
-        {/* Strength */}
         <Field label="Strength">
           <TextInput
             type="number"
-            placeholder="5"
+            placeholder="500"
             value={form.strength}
-            onChange={(e) =>
-              updateField("strength", e)
+            onChange={(value) =>
+              updateField("strength", value)
             }
           />
         </Field>
 
-        {/* Strength Unit */}
         <Field label="Unit">
           <SelectInput
             options={strengthUnits}
             value={form.unit}
-            onChange={(e) =>
-              updateField("unit", e)
+            onChange={(value) =>
+              updateField("unit", value)
             }
           />
         </Field>
 
-        {/* Medicine Form */}
         <Field label="Form">
           <SelectInput
             options={formOptions}
             value={form.form}
-            onChange={(e) =>
-              updateField("form", e)
+            onChange={(value) =>
+              updateField("form", value)
             }
           />
         </Field>
 
-        {/* Stock - Hidden for syrups */}
         {!syrup && (
           <Field
             label="Current stock"
-            hint="Units on hand"
+            hint="Total units currently available"
           >
             <TextInput
               type="number"
-              placeholder="30"
+              placeholder="90"
               value={form.stock}
-              onChange={(e) =>
-                updateField("stock", e)
+              onChange={(value) =>
+                updateField("stock", value)
               }
             />
           </Field>
         )}
 
-        {/* Priority */}
         <div className="sm:col-span-2">
           <span className="mb-1.5 block text-sm font-medium">
             Priority
@@ -272,48 +243,6 @@ export default function AddMedicineModal({
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Frequency */}
-        <Field label="Administration frequency">
-          <SelectInput
-            options={frequencyOptions}
-            value={form.frequency}
-            onChange={(e) =>
-              updateField("frequency", e)
-            }
-          />
-        </Field>
-
-        {/* Quantity - Hidden for syrups */}
-        {!syrup && (
-          <Field label="Quantity per administration">
-            <TextInput
-              type="number"
-              placeholder="1"
-              value={form.quantityPerAdministration}
-              onChange={(e) =>
-                updateField(
-                  "quantityPerAdministration",
-                  e
-                )
-              }
-            />
-          </Field>
-        )}
-
-        {/* Scheduled Times */}
-        <div className="sm:col-span-2">
-          <span className="mb-1.5 block text-sm font-medium">
-            Scheduled times
-          </span>
-
-          <TimeChips
-            initial={form.scheduledTimes}
-            onChange={(value) =>
-              updateField("scheduledTimes", value)
-            }
-          />
         </div>
 
       </div>
